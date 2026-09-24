@@ -389,10 +389,6 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     forwardToPinnedTab({ type: 'SCROLL_TO_ELEMENT', elementId: msg.elementId }, sendResponse);
     return true;
   }
-  if (msg.type === 'SP_APPLY_PARENT_STYLE') {
-    forwardToPinnedTab({ type: 'APPLY_PARENT_STYLE', property: msg.property, value: msg.value }, sendResponse);
-    return true;
-  }
   if (msg.type === 'SP_DOM_ACTION') {
     forwardToPinnedTab({ type: 'DOM_ACTION', action: msg.action, elementId: msg.elementId, elementIds: msg.elementIds }, sendResponse);
     return true;

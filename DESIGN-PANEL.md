@@ -160,14 +160,14 @@ Three horizontal alignment + three vertical alignment buttons.
 
 | Cell | What | Dispatch logic |
 |---|---|---|
-| Align left / center / right | Horizontal alignment | If parent is **block flow** → `margin-left` / `margin-right: auto`. If parent is **flex / grid** → `justify-self`. If position is **absolute / fixed** → `left` / `right` + `translate(-50%, 0)`. |
-| Align top / middle / bottom | Vertical alignment | If parent is **flex / grid** → `align-self`. If position is **absolute / fixed** → `top` / `bottom` + `translate(0, -50%)`. Block flow doesn't natively vertical-center children, so the buttons are inert there. |
+| Align left / center / right | Horizontal alignment | If parent is **block flow** → `margin-left` / `margin-right: auto` (needs free width to have any effect). If parent is **flex / grid** → `justify-self`. If position is **absolute / fixed** → `left` / `right` + `translate(-50%, 0)`. |
+| Align top / middle / bottom | Vertical alignment | If parent is **flex / grid** → `align-self`. If position is **absolute / fixed** → `top` / `bottom` + `translate(0, -50%)`. Block flow can't vertical-center children, so these three render **disabled** (tooltip explains why) instead of silently doing nothing. |
 
 **Figma equivalent**: the alignment row in Position panel.
 
 ### Distribute (2 buttons, multi-select only)
 
-Appears only when 2+ siblings are selected. Writes `justify-content: space-between` (horizontal) or `align-content: space-between` (vertical) on the **common parent** so all selected siblings space evenly.
+Appears only when 2+ siblings are selected. The parent has to be a flex or grid container for either axis to move anything, so on first use a non-grid parent is switched to flex (`display: flex` plus `flex-direction: row` for horizontal / `column` for vertical) and then `space-between` is written on the main axis. A grid parent keeps its display and gets `justify-content: space-between` (horizontal) or `align-content: space-between` (vertical). Properties already at their target value aren't rewritten, so the Changes tab only lists real edits.
 
 **Figma equivalent**: "Tidy up" → distribute horizontally / vertically.
 

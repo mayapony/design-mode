@@ -3358,36 +3358,6 @@ function detectParentContext(displayInfo: any, s: Record<string, string>): {
   };
 }
 
-// Distribute buttons — render only when 2+ siblings are selected.
-function positionDistributeRow(): string {
-  const enabled = multiSelectActive && multiSelectIds.length >= 2;
-  if (!enabled) return '';
-  return iconButtonRow([
-    { icon: 'alignHorizontalSpaceAround', attr: 'data-dm-pos-distribute="horizontal"', title: 'Distribute horizontally' },
-    { icon: 'alignVerticalSpaceAround', attr: 'data-dm-pos-distribute="vertical"', title: 'Distribute vertically' },
-  ]);
-}
-
-// Rotation 90° quick buttons — bump the `rotate` longhand by ±90deg.
-// The default icon size (14) reads as ambiguous in this dense row, so
-// these get bumped to 18 — same visual weight as the alignment glyphs.
-function rotateQuickButtons(s: Record<string, string>): string {
-  void s;
-  return iconButtonRow([
-    { icon: 'rotateCcw', attr: 'data-dm-rotate-step="-90"', title: 'Rotate 90° counter-clockwise', size: 18 },
-    { icon: 'rotateCw',  attr: 'data-dm-rotate-step="90"',  title: 'Rotate 90° clockwise',          size: 18 },
-  ]);
-}
-
-// Z-order — Bring forward / Send backward as ±1 increment buttons.
-function zOrderButtons(s: Record<string, string>): string {
-  void s;
-  return iconButtonRow([
-    { icon: 'arrowUpToLine', attr: 'data-dm-z-step="up"', title: 'Bring forward' },
-    { icon: 'arrowDownToLine', attr: 'data-dm-z-step="down"', title: 'Send backward' },
-  ]);
-}
-
 function layoutModeRow(s: Record<string, string>): string {
   const display = s.display || 'block';
   const flexDir = s.flexDirection || 'row';
@@ -7125,8 +7095,16 @@ function renderDesignTab(): string {
   const rotateRaw = s.rotate || '';
   const rotateDisplay = (rotateRaw === 'none' || rotateRaw === '') ? '0deg' : rotateRaw;
   // Build alignment buttons individually so each can claim its 2-col span.
-  const alignBtnHtml = (iconName: keyof typeof icons, attr: string, title: string): string =>
-    '<button class="dm-icon-row-button" ' + attr + ' data-active="false" title="' + escapeAttr(title) + '" style="width:100%;height:30px;padding:6px;">' + icon(iconName, 14) + '</button>';
+  // A block-flow parent can't honour vertical alignment — auto margins on a
+  // block-level box resolve to 0 and align-self needs a flex/grid parent — so
+  // those three render disabled rather than silently no-op'ing.
+  const posAlignCtx = detectParentContext(displayInfo, s);
+  const verticalAlignInert = !posAlignCtx.isFlex && !posAlignCtx.isGrid && !posAlignCtx.isAbs;
+  const verticalAlignTitle = (t: string) => verticalAlignInert
+    ? t + ' — needs a flex or grid parent, or a positioned layer'
+    : t;
+  const alignBtnHtml = (iconName: keyof typeof icons, attr: string, title: string, disabled = false): string =>
+    '<button class="dm-icon-row-button" ' + attr + ' data-active="false"' + (disabled ? ' disabled' : '') + ' title="' + escapeAttr(title) + '" style="width:100%;height:30px;padding:6px;">' + icon(iconName, 14) + '</button>';
   const distBtnHtml = (iconName: keyof typeof icons, attr: string, title: string): string =>
     '<button class="dm-icon-row-button" ' + attr + ' data-active="false" title="' + escapeAttr(title) + '" style="width:100%;height:30px;padding:6px;">' + icon(iconName, 14) + '</button>';
   const zOrderBtnHtml = (iconName: keyof typeof icons, attr: string, title: string): string =>
@@ -7200,14 +7178,15 @@ function renderDesignTab(): string {
   const positionContent =
     sel('Position', 'position', s.position || 'static', ['static','relative','absolute','fixed','sticky']) + sp() +
     // Alignment row \u2014 always visible (margin-auto / align-self / justify-self
-    // work regardless of position type).
+    // work regardless of position type; the vertical three disable themselves
+    // when the parent context can't honour them).
     grid12([
       { span: 2, content: alignBtnHtml('alignStartVertical', 'data-dm-pos-align="h-left"', 'Align left') },
       { span: 2, content: alignBtnHtml('alignCenterVertical', 'data-dm-pos-align="h-center"', 'Align horizontal center') },
       { span: 2, content: alignBtnHtml('alignEndVertical', 'data-dm-pos-align="h-right"', 'Align right') },
-      { span: 2, content: alignBtnHtml('alignStartHorizontal', 'data-dm-pos-align="v-top"', 'Align top') },
-      { span: 2, content: alignBtnHtml('alignCenterHorizontal', 'data-dm-pos-align="v-middle"', 'Align vertical center') },
-      { span: 2, content: alignBtnHtml('alignEndHorizontal', 'data-dm-pos-align="v-bottom"', 'Align bottom') },
+      { span: 2, content: alignBtnHtml('alignStartHorizontal', 'data-dm-pos-align="v-top"', verticalAlignTitle('Align top'), verticalAlignInert) },
+      { span: 2, content: alignBtnHtml('alignCenterHorizontal', 'data-dm-pos-align="v-middle"', verticalAlignTitle('Align vertical center'), verticalAlignInert) },
+      { span: 2, content: alignBtnHtml('alignEndHorizontal', 'data-dm-pos-align="v-bottom"', verticalAlignTitle('Align bottom'), verticalAlignInert) },
     ]) + sp() +
     // Distribute row (multi-select only) \u2014 6 cols each so they evenly fill.
     (distributeActive ? grid12([
@@ -11193,17 +11172,14 @@ function setupDelegation() {
       return;
     }
 
-    // Distribute (multi-select) — writes the parent's justify-content /
-    // align-content via the SP_APPLY_PARENT_STYLE pipe (assumes parent gets
-    // flex/grid). For the v1 path, we just write justify-content on the
-    // parent of the focused element to space-between.
+    // Distribute (multi-select) — sends the intended axis; the content script
+    // resolves it against the parent (auto-flexing it when needed), because
+    // only the live parent display decides which property can move anything.
     const posDistBtn = target.closest<HTMLElement>('[data-dm-pos-distribute]');
     if (posDistBtn) {
       e.stopPropagation();
-      const which = posDistBtn.dataset.dmPosDistribute!;
-      send({ type: 'SP_APPLY_PARENT_STYLE',
-        property: which === 'horizontal' ? 'justifyContent' : 'alignContent',
-        value: 'space-between' });
+      send({ type: 'SP_APPLY_PARENT_STYLE', axis: posDistBtn.dataset.dmPosDistribute! })
+        .then(res => { if (res.info) { info = res.info; render(); } });
       return;
     }
 

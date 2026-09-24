@@ -1543,32 +1543,41 @@ browser.runtime.onMessage.addListener((msg, _, sendResponse) => {
     // produced visible flicker (intermediate renders showing partial
     // state) and a "moving through one tab at a time" feeling. One
     // message, one re-paint, one info refresh, one Changes-tab group.
+    // Same multi-select fan-out as APPLY_STYLE — a batched gesture (uniform
+    // margin / padding, stroke weight) has to hit every selected element too.
     case 'APPLY_STYLES': {
       const sid = getSelectedElementId();
       if (!sid || !Array.isArray(msg.changes)) {
         sendResponse({ error: 'No element selected' });
         break;
       }
+      const multiIds = isMultiSelectActive() ? getMultiSelectIds() : [];
+      const targetIds = multiIds.length > 0
+        ? Array.from(new Set([sid, ...multiIds]))
+        : [sid];
       const groupId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const groupMeta = {
         groupId,
         groupKind: 'multi-select' as const,
         groupLabel: msg.groupLabel || 'Batch',
       };
-      for (const c of msg.changes) {
-        if (!c?.property) continue;
-        const el = getElementById(sid);
+      for (const id of targetIds) {
+        const el = getElementById(id);
         if (!el) continue;
-        const kebab = c.property.replace(/[A-Z]/g, (m: string) => '-' + m.toLowerCase());
-        const beforeValue = authoredTokenValueFor(el, kebab) ?? window.getComputedStyle(el).getPropertyValue(kebab);
-        const change = applyWithCompanions(sid, c.property, c.value, undefined, groupMeta);
-        const afterValue = window.getComputedStyle(el).getPropertyValue(kebab);
-        if (afterValue !== beforeValue) {
-          undoStack.push({ kind: 'style', elementId: sid, property: c.property, oldValue: beforeValue, newValue: c.value, changeId: change?.id });
+        for (const c of msg.changes) {
+          if (!c?.property) continue;
+          const kebab = c.property.replace(/[A-Z]/g, (m: string) => '-' + m.toLowerCase());
+          const beforeValue = authoredTokenValueFor(el, kebab) ?? window.getComputedStyle(el).getPropertyValue(kebab);
+          const change = applyWithCompanions(id, c.property, c.value, undefined, groupMeta);
+          const afterValue = window.getComputedStyle(el).getPropertyValue(kebab);
+          if (afterValue !== beforeValue) {
+            undoStack.push({ kind: 'style', elementId: id, property: c.property, oldValue: beforeValue, newValue: c.value, changeId: change?.id });
+          }
         }
       }
       if (msg.changes.length > 0) redoStack.length = 0;
       requestAnimationFrame(() => {
+        if (multiIds.length > 0) refreshMultiSelectOverlays();
         const focusedEl = getElementById(sid);
         if (focusedEl) showSelect(focusedEl);
         repositionResizeDots();
@@ -1584,30 +1593,66 @@ browser.runtime.onMessage.addListener((msg, _, sendResponse) => {
       return true;
     }
 
+    // Distribute (multi-select): the panel sends the intended axis and this
+    // side resolves it against the parent, because only the parent's display
+    // decides which property can move anything. `justify-content` is inert on
+    // a block parent and `align-content` is inert on a single-line flex one,
+    // so both axes are expressed as main-axis distribution — which means the
+    // parent needs a flex formatting context first (it never had one before,
+    // which is why the buttons appeared dead). Grid gets both axes natively,
+    // so it's left alone.
     case 'APPLY_PARENT_STYLE': {
       const sid = getSelectedElementId();
       const el = sid ? getElementById(sid) : null;
       const parent = el?.parentElement as HTMLElement | null;
-      if (parent && msg.property) {
-        const parentId = getOrAssignId(parent);
-        applyStyleChange(parentId, msg.property, msg.value, () => {});
-        requestAnimationFrame(() => {
-          const focusedEl = sid ? getElementById(sid) : null;
-          if (focusedEl) showSelect(focusedEl);
-          repositionResizeDots();
-        });
-        const updatedEl = el;
-        const updatedInfo = updatedEl ? buildElementInfo(updatedEl) : null;
-        getChangesPayload().then(p => sendResponse({
-          info: updatedInfo ? { ...updatedInfo, element: undefined } : null,
-          ...p,
-          undoCount: undoStack.length,
-          redoCount: redoStack.length,
-        }));
-        return true;
+      if (!parent || !msg.axis) {
+        sendResponse({ error: 'No parent' });
+        break;
       }
-      sendResponse({ error: 'No parent' });
-      break;
+      const parentId = getOrAssignId(parent);
+      const isHorizontal = msg.axis === 'horizontal';
+      const parentStyle = window.getComputedStyle(parent);
+      const display = parentStyle.display;
+      const flexDirection = parentStyle.flexDirection;
+      const isGrid = display === 'grid' || display === 'inline-grid';
+      const groupMeta = {
+        groupId: `distribute-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        groupKind: 'preset' as const,
+        groupLabel: 'Distribute',
+      };
+      if (!isGrid) {
+        // Only write what isn't already true — a no-op `display: flex` on an
+        // already-flex parent would otherwise land in Changes / Copy Prompt
+        // as a change the user never asked for.
+        if (display !== 'flex' && display !== 'inline-flex') {
+          applyStyleChange(parentId, 'display', 'flex', undefined, groupMeta);
+        }
+        const wantDirection = isHorizontal ? 'row' : 'column';
+        if (flexDirection !== wantDirection) {
+          applyStyleChange(parentId, 'flexDirection', wantDirection, undefined, groupMeta);
+        }
+      }
+      applyStyleChange(
+        parentId,
+        isGrid && !isHorizontal ? 'alignContent' : 'justifyContent',
+        'space-between',
+        undefined,
+        groupMeta,
+      );
+      requestAnimationFrame(() => {
+        const focusedEl = sid ? getElementById(sid) : null;
+        if (focusedEl) showSelect(focusedEl);
+        repositionResizeDots();
+      });
+      const updatedEl = el;
+      const updatedInfo = updatedEl ? buildElementInfo(updatedEl) : null;
+      getChangesPayload().then(p => sendResponse({
+        info: updatedInfo ? { ...updatedInfo, element: undefined } : null,
+        ...p,
+        undoCount: undoStack.length,
+        redoCount: redoStack.length,
+      }));
+      return true;
     }
 
     case 'DOM_ACTION': {
